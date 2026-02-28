@@ -11,7 +11,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "chromadb": "^3.3.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "langchain": "^1.2.28",

@@ -1,55 +1,114 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Heisenberg Local AI</title>
-  <style>
-    body { font-family: Arial; max-width: 700px; margin: auto; }
-    #chat { margin-top: 20px; }
-    .user { color: blue; }
-    .ai { color: green; }
-    textarea { width: 100%; height: 60px; }
-    button { margin-top: 5px; }
-  </style>
+  <title>Local AI Voice Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
-  <h2>Local Llama3:8B Chat</h2>
-
-  <textarea id="msg" placeholder="Ask something..."></textarea>
-  <button onclick="send()">Send</button>
-  <button onclick="resetChat()">Reset</button>
+  <header>Local AI Voice Assistant</header>
 
   <div id="chat"></div>
 
+  <div id="inputArea">
+    <input id="msg" placeholder="Ask something..." />
+    <button onclick="startVoice()">🎤</button>
+    <button onclick="send()">Send</button>
+  </div>
+
   <script>
-    const SERVER = "http://192.168.0.161:5000"; // CHANGE THIS
+    const chat = document.getElementById("chat");
+    const msgBox = document.getElementById("msg");
 
     async function send() {
-      const msgBox = document.getElementById("msg");
-      const message = msgBox.value;
+      const message = msgBox.value.trim();
       if (!message) return;
 
-      document.getElementById("chat").innerHTML +=
-        `<p class="user"><b>You:</b> ${message}</p>`;
-
+      addMessage(message, "user");
       msgBox.value = "";
 
-      const res = await fetch(`${SERVER}/chat`, {
+      const aiMessageElement = addMessage("Typing...", "ai", true);
+
+      const response = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message })
       });
 
-      const data = await res.json();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-      document.getElementById("chat").innerHTML +=
-        `<p class="ai"><b>AI:</b> ${data.reply}</p>`;
+      aiMessageElement.textContent = "";
+      aiMessageElement.classList.remove("typing");
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        aiMessageElement.textContent += chunk;
+        chat.scrollTop = chat.scrollHeight;
+      }
+
+      speak(aiMessageElement.textContent);
     }
 
-    async function resetChat() {
-      await fetch(`${SERVER}/reset`, { method: "POST" });
-      document.getElementById("chat").innerHTML = "";
+    function addMessage(text, type, isTyping = false) {
+      const div = document.createElement("div");
+      div.className = `message ${type}`;
+      if (isTyping) div.classList.add("typing");
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
     }
+
+    msgBox.addEventListener("keydown", function(e) {
+      if (e.key === "Enter") send();
+    });
+
+    // 🎤 Speech Recognition
+    let recognition;
+
+    function startVoice() {
+      if (!('webkitSpeechRecognition' in window)) {
+        alert("Speech recognition not supported in this browser.");
+        return;
+      }
+
+      recognition = new webkitSpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        console.log("Listening...");
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        msgBox.value = transcript;
+        send();
+      };
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error);
+      };
+
+      recognition.start();
+    }
+
+    // 🔊 Text-to-Speech
+    function speak(text) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+      speechSynthesis.speak(utterance);
+    }
+
   </script>
 
 </body>

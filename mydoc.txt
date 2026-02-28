@@ -1,0 +1,431 @@
+22UPH201–PHYSICSFORINFORMATIONSCIENCE
+UNIT I -FIBER OPTICS 
+Principle, Numerical aperture and acceptance angle – Types of optical fiber (material,
+refractive index and mode) –Attenuation mechanism in optical fibers –Applications: Fiber
+optic communication –Fiber optic sensor: Pressure and Displacement.
+UNITII-PHOTONICMATERIALS 
+Classification of optical materials – Carrier generation and recombination processes –
+Absorption emission and scattering of light in metals, insulators and semiconductors
+(concepts only) – Photo current in a P-N diode – Solar cell – LED – Organic LED.
+UNIT III - MAGNETIC MATERIALS 
+Basic definitions – Origin of magnetic moment – Classification of magnetic materials (Dia,
+Para & Ferro) – Domain theory of ferromagnetism – Hysteresis of ferromagnetic materials–
+Soft and hard magnetic materials – Giant Magneto Resistance (GMR) effect.
+UNITIV-QUANTUMDEVICESANDQUANTUMCOMPUTING 
+Quantum confinement – Quantum structures: quantum wells, wires and dots – Tunnelling:
+Resonant Tunnelling Diode (RTD) – Quantum system for information processing–Classical
+bits – Quantum bits (or) qubits –CNOT gate – Advantage of quantum computing over
+classical computing.
+UNITV-DATASTORAGEDEVICES 
+Computer Data storage, Types of Storage, Primary Storage–RAM, ROM, Cache–Secondary
+Storage –Hard disk, Tertiary Storage – Magnetic tape, Compact disc, Digital versatile disc,
+Blue-ray –Off-line Storage – USB Flash drive, memory card.
+
+TOTAL: 30 PERIODS
+
+UNIT I
+FIBER OPTICS
+PART-A 2 MARKS
+
+1. Define wave guide.
+A wave guide is a tubular structure through which some sort of energy could be
+guided in the form of waves. Since light wave can be guided through a fiber, it is
+called wave guide.
+2. Point out the principle of optical fiber. (or) List the conditions for total
+internal reflection?
+Principle of optical fiber is Total internal Reflection.
+(i) Light should travel from denser medium to rarer medium. That is the refractive
+index of the core should be greater than the refractive e index of the cladding.
+(ii) The angle of incidence should be greater than the critical angle.
+3. Define NA and acceptance angle
+NA is the light gathering capacity of an optical fiber. It can also be defined as the
+sine of the acceptance angle.
+The maximum angle at (or) below which the light can suffer total internal
+reflection is called as acceptance angle. The cone of rays that are accepted by the
+fiber to have total internal reflection inside the fiber is referred as acceptance
+cone.
+4. How optical fibers are classified based on no. of modes, material and refractive
+index profile?
+Optical fibers are classified into three major categories based on
+(i) material–glass fiber, plastic fiber
+(ii) number of modes–single mode fiber, multimode fiber
+(iii) refractive index profile-step index fiber, graded index fiber
+5. Differentiate single mode from multimode fiber
+
+S. No. Single mode fiber Multimode fiber
+1. Only one mode can be propagated Large modes are available for the
+
+light to propagate
+2. Has smaller core diameter Has larger core diameter
+
+6. Distinguish between step index and graded index fiber
+S. No. Step index fiber Graded index fiber
+1. The difference in refractive index
+between core and cladding is
+obtained in a single step
+
+Due to non-uniform refractive indices
+their difference in refractive indices
+between the core and cladding gradually
+increases from centre towards interface.
+
+2. The light ray propagates as meridinal
+rays
+
+The light propagates as skew rays
+
+3. It follows a Zig Zag path It follows a helical path
+4. Has a low bandwidth Has high bandwidth
+5. Distortion is more Distortion is less
+7. Define attenuation.
+It is defined as the ratio of the optical power output from a length of a fiber ‘L’ to the
+power input.
+8. How fibers are used as sensor?
+The fiber optic sensors are used to detect changes in frequency intensity,
+temperature, current, polarization of light waves etc. A fiber optic sensor modulates
+the light passing through it, it is exposed to change in environment.
+9. Recall about active and passive sensor?
+
+S.No. Active sensors Passive sensors
+1. The physical parameters to be
+sensed directly acts on the fiber
+itself
+
+Separate sensing elements will be
+used and fiber will act as a guiding
+media to the sensors
+
+2. Example: Temperature/Pressure
+sensors
+
+Displacement sensor
+
+10. List out any four major advantages of optical fibre communication.
+
+● Light in weight
+● Smaller in size
+● Flexible
+● Non-conductive, non radiative and non inductive.
+
+11. Mention the application of optical fiber in various fields.
+
+ Optical fibers are used for communication.
+ It is also used as remote sensors in industries.
+
+12. Construct a block diagram that portrait the optical fiber communication system.
+(Apr/May 2024,Reg.2022)
+
+UNIT II
+PHOTONICMATERIALS
+PART-A 2 MARKS
+
+1. Define optical materials.
+The materials which are sensitive to light are known as Optical materials. These
+optical materials exhibit a variety of optical properties.
+2. Illustrate the types of optical materials?
+Generally, optical materials are classified into three types based on the nature of
+propagation of light namely,
+(i) Transparent
+(ii) Translucent
+(iii) Opaque
+3. Define scattering of light.
+It is a process by which the intensity of the wave attenuates as it travels through a
+medium.
+
+4. State carrier generation and recombination.
+The carrier generation is the process whereby electrons and holes are created. The
+recombination is the process whereby electrons and holes are annihilated.
+5. Give the different types of carrier generations?
+(i) Photo generation
+(ii) Phonon generation
+(iii) Impact ionization
+6. List out the types of recombination process?
+1. Radiative Recombination
+2. Shockley-Read-Hall Recombination
+3. Auger Recombination
+7. Define photo diode.
+It is a reverse biased P-N junction diode which responds to light absorption.
+8. Give the basic principle of photo diode?
+When light is incident on the depletion region of the reverse-biased pn junction, the
+concentration of minority carriers increases. Therefore, reverse saturation current
+increases.
+9. What is the basic principle behold OLED?
+The injection of electrons into the p – region from n-region makes a direct transition
+from the conduction band to valence band. Then, the electron recombines with holes
+and emits photons of energy Eg.
+The forbidden gap energy is given by
+E=hν
+10. What is the principle of Solar Cell?
+Solar cell works on the principle of Photovoltaic effect.
+
+UNIT III
+MAGNETIC MATERIALS
+
+PART-A 2 MARKS
+
+1. Define magnetic moment
+Magnetic moment is defined as m=ia, where I is the electric current that flows through
+a circular wire of an area of cross section ‘a’.
+
+2. On the basis of spin how the materials are classified as para, ferro, antiferro
+and ferri magnetic.
+1. Paramagnetic materials have few unpaired electron spins of equal magnitudes.
+2. Ferromagnetic materials have many unpaired electron spins with equal
+magnitudes.
+3. Antiferro magnetic materials have equal magnitude of spins but in antiparallel
+manner.
+4. Ferrimagnetic materials have spins in antiparallel manner but with unequal
+magnitudes.
+3. State Bohr Magneton?
+The orbital magnetic moment and the spin magnetic moment of an electron in an
+atom can be expressed in terms of atomic unit of magnetic moment called Bohr
+magnetron.
+4. Define magnetic induction.
+It is defined as the number of magnetic lines of force passing normally through unit
+area of cross section at that point. Unit wb/m2.
+5. Write about Hysteresis loss.
+When the specimen is taken through a cycle of magnetization, then there is a loss of
+energy in the form of heat. This loss of energy is known as hysteresis loss.
+6. What is meant by Hysteresis loop and what do you infer from it?
+The word Hysteresis means lagging behind. When a ferromagnetic material is taken
+through a cycle of magnetisation, the variation of magnetic induction B with respect
+to applied field H is represented by a closed loop then this loop is called hysteresis
+loop.
+
+From the hysteresis loop we infer
+1. The type magnetic materials either be a soft or hard
+2. The value of residual magnet is m in the given specimen can be
+determined
+3. Its coercivity can be calculated.
+7. Distinguish between soft and hard magnets.
+S.No Hard magnets Soft magnets
+1. They have hysteresis loop area
+and hence large hysteresis loss.
+
+They have small hysteresis loop and
+hence small hysteresis loss.
+
+2. The eddy current loss is more
+due to its small resistivity
+
+The eddy current loss is low due to its
+higher resistivity
+
+3. They have small values of
+permeability and susceptibility
+
+These materials have large values of
+permeability and susceptibility
+
+4. Domain wall movement is
+difficult and it is irreversible in
+nature
+
+Domain walls move easily and
+reversibly
+
+5. The coercivity and retentivity are
+large
+
+The coercivity and retentivity are small
+
+6. The irregularities like mechanical
+strain will be more. Its
+magnetostatic energy is large
+
+Free from irregularities. Its
+magnetostatic energy is very small.
+
+7. These are produced by heating
+the materials and plunging
+suddenly into the cold liquid
+
+These are produced by heating the
+material to a sufficient temperature
+followed by a slow cooling
+
+8. Ex: Tungsten, steel, carbon Ex: Iron-silicon alloy, Nickel-iron alloy.
+
+8. Recall about Coercivity and Retentivity of magnetic
+materials.
+Coercivity:
+It is the strength of reverse magnetic field (-Hc) which is used to completely
+demagnetize the material.
+Retentivity:
+There exists some residual intensity of magnetization in the specimen even when the
+magnetic field is cut off. This is called residual magnetism or retentivity.
+
+9. Write about ferromagnetism.
+Certain materials like Iron (Fe), Cobalt (Co), Nickel (Ni) and certain alloys exhibit
+spontaneous magnetization i.e., they have a small amount of magnetisation (atomic
+moments are aligned) even in the absence of an external magnetic field.
+This phenomenon is known as ferromagnetism.
+10. Point out the properties of ferromagnetic materials?
+1. All the dipoles are aligned parallel to each other due to the magnetic interaction
+between any two dipoles.
+2. They have permanent dipole moment. They attract the magnetic field strongly.
+3. They exhibit magnetisation even in the absence of magnetic field. This property of
+ferromagnetic materials is called as spontaneous magnetization.
+11. Mention the energies involved in origin of domains in ferromagnetic material.
+(i) Magnetostatic energy (ii) Crystalline energy
+(iii)Domain wall energy (iv) Magnetostriction energy.
+12. State the soft-magnetic materials?
+Materials which are easy to magnetise and demagnetize are called soft
+magnetic materials.
+13. List out few soft magnetic materials and their applications
+Soft magnetic materials:
+(i) Pure or ingot iron
+(ii) Cast iron(carbonabove2.5%)
+(iii) Carbon steel
+Applications:
+a. Cast iron is used in the structure of electrical machinery and frame work of d.c.
+machine.
+b. Carbon steel has high mechanical strength used in making motor of turbo
+alternators.
+14. Mention few hard magnetic materials and their
+application.
+1. Tungsten steel contains 4.5 to 6% tungsten, 0.5 to 0.7% carbon and the remaining
+is iron.
+2. Cobalt steel contains 34% cobalt, 5% chromium 3.5 to 6% tungsten and
+remaining is iron.
+
+Applications:
+3. Tungsten steel is used in making permanent magnets for dynamos, motor.
+4. Cobalt steel is used in motor, fans and heavy duty instruments.
+15. Show that the relative permeability (μr) of a magnetic material is greater than 1
+Relative permeability (μr) is given by: μr=1+χm where χm is the magnetic susceptibility.
+For magnetic materials (paramagnetic and ferromagnetic), χm>0, so: μr >1.
+Thus, magnetic materials enhance the magnetic field, proving that μr is always greater
+than 1.
+16. Define Energy product in magnetism.
+The energy product is defined as the product of retentivity (Br) and coercivity (Hc).
+17. Reproduce Giant Magneto resistance effect. (R)
+The Giant Magneto resistance (GMR) effect occurs in thin-film structures of
+alternating ferromagnetic and non-magnetic conductive layers. It is observed when
+the electrical resistance changes significantly under an applied magnetic field due to
+spin-dependent electron scattering. GMR is widely used in hard disk drives and
+magnetic sensors.
+
+UNIT IV
+
+QUANTUM DEVICES AND QUANTUM COMPUTING
+
+PART-A 2 MARKS
+
+1. Summarize about quantum confinement?
+It is a process of reduction of the size of the solid such that the energy levels inside
+become discrete
+2. Illustrate about quantum structure?
+When a bulk material is reduced in its size, atleast one of its dimension, in the order
+of few nano metres, then the structure is known as quantum structure.
+3. Define Quantum dots.
+Quantum dots are tiny particles or nano crystals of a semiconducting
+material with diameters in the range of 2-10 nanometers (10-50 atoms).
+4. Recall about tunneling?
+The phenomenon in which a particle, like an electron, encounters an energy
+in an electronic structure and suddenly penetrates is known as tunneling.
+5. Define Quantum Tunneling.
+Quantum tunneling is defined as a quantum mechanical process where wave
+functions can penetrate through a potential barrier. The transmission through the
+potential barrier can be finite and relies exponentially on the barrier width and
+barrier height.
+6. Write about resonant tunneling?
+The transmission probability of the double symmetric barrier is maximum and hence
+the tunneling current reaches peak value when energy of electron wave is equal to
+quantised energy state of the well. This phenomenon is known as resonance
+tunneling.
+7. What is quantum state?
+In quantum physics, a quantum state is a mathematical entity that provides a
+probability distribution for the outcomes of each possible measurement on a system.
+Knowledge of the quantum state together with the rules for the system's evolution in
+time exhausts all that can be predicted about the system's behavior.
+8. Give the meaning of quantum bits.
+The smallest unit of information in a quantum computer. Unlike bits in classical
+systems, which are in one of two possible states labelled 1 and 0, a quantum bit
+exists in a superposition of these two states, settling on one or the other only when a
+measurement of the state is made. Also called qubit.
+
+9. How the quantum gates are used?
+A quantum gate or quantum logic gate is a rudimentary quantum circuit operating on
+a small number of qubits. They are the analogues for quantum computers to classical
+logic gates for conventional digital computers. Quantum logic gates are reversible,
+unlike many classical logic gates
+10. List out the applications of quantum computing.
+They’re fast. Ultimately, quantum computers have the potential to provide
+computational power on a scale that traditional computers cannot ever match. In
+2019, for example, Google claimed to carry out a calculation in about 200seconds
+that would take a classical supercomputer around 10,000 years.
+11. How are qubits stored?
+Qubits are stored in physical systems like superconducting circuits, trapped ions, or
+photons, maintaining quantum properties. Their states are controlled and read using
+microwave pulses, lasers, or magnetic fields.
+12. Conclude the advantages of quantum computing over classical computing.(E)
+In Quantum computing, 0’s and 1’s can be represented simultaneously.
+Quantum computers are incredibly fast and effective.
+Quantum computing is used to run complex simulations.
+
+UNIT V
+DATASTORAGEDEVICES
+PART-A 2 MARKS
+
+1. Write the different types of computer memory?
+The different types of computer memory are primary memory and secondary memory.
+2. Why are the programs and instructions essential for a computer to work
+need to be stored in ROM? What would happen if they were stored in RAM?
+The programs and instructions are stored in ROM because ROM retains its contents
+even when the computer is turned off. If they were stored in RAM, all the data would
+have been lost when the computer is turned off.
+3. What are data storage units? Write the different types of storage units and
+their relationships.
+Data storage units are used to measure computer memory.
+Relationship between different units of computer memory
+are; 8 bits =1byte
+1024 bytes = 1 Kilobyte
+1024 KB =1 Megabyte
+1024MB=1Gigabyte
+1024GB = 1 Terabyte
+1024 TB = 1 Petabyte
+1024 PB = 1 Exabyte
+1024 EB = 1 Zettabyte
+4. Give the need of secondary storage devices? List some examples.
+Secondary storage devices are used to store data permanently. Some examples are:
+CD, Pen Drive, DVD, Hard disk.
+5. Why is hard disk considered an important secondary storage device?
+Hard disk is considered an important secondary storage device
+because it stores the operating system, software applications and all the files and
+folders.
+6. What are the different types of CDs? How are they different from each other?
+Different types of CDs are:
+• CD-R (Compact Disc – Recordable) –Data can be written to this CD only once.
+• CD-RW (Compact Disc–Rewritable)–Data can be rewritten to this CD after
+erasing the stored data.
+
+7. Compare the storage capacities of a hard disk and a blu-ray disc.
+The storage capacity of a hard disk is 250 GB to 3 TB and Blu-ray disc is up to 25 GB.
+8. List out the advantage does a USB flash drive have over other storage devices.
+The advantages of a USB flash drive over the other devices are:
+a) It is small in size and portable.
+b) It is a durable device.
+c) Writing and erasing speed is high.
+D) It keeps the data safe and secure.
+9. Define Blu-ray disc.
+The Blu-Ray disc (BD) format was developed to enable recording, rewriting and
+playback of high-definition video (HD), as well as storing large amounts of data.
+10. How many types of Blu-ray are there?
+Blu-ray Disc recordable (BD-R) refers to two optical disc formats that can be
+recorded with an optical disc recorder. BD-Rs can be written to once, whereas
+Blu-ray Disc Recordable Erasable (BD-REs) can be erased and re-recorded multiple
+times.
+11. What is USB flash drive?
+A USB flash drive also known as a USB stick, USB thumb drive or pen drive is a
+plug-and play portable storage device that uses flash memory and is light weight
+enough to attach to a key chain.
+12. How do you define a memory card?
+A memory card is a type of storage device that is used for storing media and data
+files. It provides a permanent and non-volatile medium to store data and files from
+the attached device.
+13. Interpret the importance of Blue-ray disc.
+A Blu-ray Disc is an optical disc storage medium that enables high-definition video,
+high-capacity data storage (up to 50GB on dual-layer discs), and enhanced audio
+quality, surpassing DVDs. Its importance lies in superior data density, faster data
+transfer rates, and support for advanced multimedia applications.
