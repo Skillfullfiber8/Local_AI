@@ -1,6 +1,9 @@
 import express from "express";
-import fetch from "node-fetch";
 import cors from "cors";
+import fetch from "node-fetch";
+import { exec, spawn } from "child_process";
+import fs from "fs";
+import path from "path";
 import { searchVectors } from "./vectorStore.js";
 
 const app = express();
@@ -13,18 +16,18 @@ const OLLAMA_URL = "http://127.0.0.1:11434";
 const MODEL = "llama3:8b";
 const EMBED_MODEL = "nomic-embed-text";
 
-
-
+/* ==============================
+   TEXT CHAT (STREAMING + RAG)
+================================ */
 app.post("/chat", async (req, res) => {
   try {
     const userQuery = req.body.message;
 
-    // Embed query
-    const embedRes = await fetch("http://127.0.0.1:11434/api/embeddings", {
+    const embedRes = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "nomic-embed-text",
+        model: EMBED_MODEL,
         prompt: userQuery
       })
     });
@@ -48,15 +51,14 @@ ${userQuery}
 Answer:
 `;
 
-    // Tell browser we're streaming
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const ollamaRes = await fetch("http://127.0.0.1:11434/api/generate", {
+    const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3:8b",
+        model: MODEL,
         prompt: finalPrompt,
         stream: true,
         temperature: 0.3
@@ -75,13 +77,88 @@ Answer:
     }
 
     res.end();
-
   } catch (err) {
     console.error(err);
-    res.status(500).end("Streaming failed");
+    res.status(500).end("Chat failed");
   }
 });
 
+/* ==============================
+   OFFLINE VOICE INPUT
+   WebM → WAV → Whisper
+================================ */
+app.post("/voice-input", (req, res) => {
+  const webmFile = path.join(process.cwd(), "input.webm");
+  const wavFile = path.join(process.cwd(), "input.wav");
+
+  const writeStream = fs.createWriteStream(webmFile);
+  req.pipe(writeStream);
+
+  writeStream.on("finish", () => {
+
+    // Convert WebM → WAV (16kHz mono)
+    exec(
+      `"${process.cwd()}\\voice\\ffmpeg\\ffmpeg.exe" -y -i "${webmFile}" -ar 16000 -ac 1 -c:a pcm_s16le "${wavFile}"`,
+      (ffErr) => {
+        if (ffErr) {
+          console.error("FFmpeg error:", ffErr);
+          return res.status(500).send("Audio conversion failed");
+        }
+
+        // Run Whisper
+        exec(
+          `"${process.cwd()}\\voice\\whisper\\whisper-cli.exe" -m "${process.cwd()}\\voice\\whisper\\models\\ggml-tiny.en.bin" -f "${wavFile}"`,
+          (error, stdout) => {
+            if (error) {
+              console.error("Whisper error:", error);
+              return res.status(500).send("Whisper failed");
+            }
+
+            const cleaned = stdout
+              .replace(/\[.*?\]/g, "")
+              .replace(/\n/g, " ")
+              .trim();
+
+            res.json({ text: cleaned });
+          }
+        );
+      }
+    );
+  });
+});
+
+/* ==============================
+   OFFLINE VOICE OUTPUT (Piper)
+================================ */
+app.post("/voice-output", (req, res) => {
+  const text = req.body.text;
+  const outputFile = path.join(process.cwd(), "response.wav");
+
+  const piperPath = path.join(process.cwd(), "voice", "piper", "piper.exe");
+  const modelPath = path.join(process.cwd(), "voice", "piper", "models", "en_US-lessac-medium.onnx");
+
+  const piper = spawn(piperPath, [
+    "--model", modelPath,
+    "--output_file", outputFile
+  ]);
+
+  piper.stdin.write(text);
+  piper.stdin.end();
+
+  piper.on("close", (code) => {
+    if (code !== 0) {
+      console.error("Piper exited with code:", code);
+      return res.status(500).send("TTS failed");
+    }
+
+    if (!fs.existsSync(outputFile)) {
+      return res.status(500).send("Audio not generated");
+    }
+
+    res.sendFile(outputFile);
+  });
+});
+
 app.listen(5000, "0.0.0.0", () => {
-  console.log("RAG Server running on port 5000");
+  console.log("Full Offline Voice AI running on port 5000");
 });
