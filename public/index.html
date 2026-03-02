@@ -9,27 +9,125 @@
 
 <header>Offline Voice AI</header>
 
-<div id="chat"></div>
+<div id="chatContainer">
+  <div id="chat"></div>
+</div>
 
 <div id="inputArea">
-  <input id="msg" placeholder="Ask something..." />
-  <button onclick="startVoice()">🎤</button>
-  <button onclick="send()">Send</button>
+  <div id="inputWrapper">
+    <button id="micBtn" onclick="startVoice()">🎙</button>
+    <textarea id="msg" rows="1" placeholder="Message AI... / Say Hey Jarvis..."></textarea>
+    <button id="sendBtn" onclick="send()">➤</button>
+  </div>
 </div>
 
 <script>
+
 const chat = document.getElementById("chat");
 const msgBox = document.getElementById("msg");
 
-function addMessage(text, type, typing=false) {
+/* ===============================
+   ENTER TO SEND
+================================= */
+msgBox.addEventListener("keydown", function (e) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+msgBox.addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = this.scrollHeight + "px";
+});
+
+function addMessage(text, type) {
   const div = document.createElement("div");
   div.className = `message ${type}`;
-  if (typing) div.classList.add("typing");
   div.textContent = text;
   chat.appendChild(div);
   chat.scrollTop = chat.scrollHeight;
   return div;
 }
+
+/* ===============================
+   WAKE WORD POLLING
+================================= */
+
+let wakeHandled = false;
+
+setInterval(async () => {
+  try {
+    const res = await fetch("/wake-status", { cache: "no-store" });
+    const data = await res.json();
+
+    if (data.wake && !wakeHandled && !isRecording) {
+      wakeHandled = true;
+      playWakeSound();
+      startVoice();
+      setTimeout(() => { wakeHandled = false; }, 3000);
+    }
+  } catch (e) {
+    // server unreachable, skip silently
+  }
+}, 300);
+
+function playWakeSound() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  osc.frequency.value = 880;
+  osc.connect(ctx.destination);
+  osc.start();
+  setTimeout(() => { osc.stop(); ctx.close(); }, 150);
+}
+
+/* ===============================
+   TTS ENGINE
+================================= */
+
+let isSpeaking = false;
+let streamFinished = false;
+let remainingText = "";
+
+async function speak(text) {
+  isSpeaking = true;
+
+  try {
+    const response = await fetch("/voice-output", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+
+    const blob = await response.blob();
+    const audio = new Audio(URL.createObjectURL(blob));
+
+    audio.onended = async () => {
+      isSpeaking = false;
+
+      // If streaming ended and leftover exists → speak all remaining at once
+      if (streamFinished && remainingText.trim().length > 0) {
+        const finalBlock = remainingText.trim();
+        remainingText = "";
+        await speak(finalBlock);
+      }
+    };
+
+    audio.onerror = () => {
+      isSpeaking = false;
+    };
+
+    audio.play();
+
+  } catch (e) {
+    console.error("TTS error:", e);
+    isSpeaking = false;
+  }
+}
+
+/* ===============================
+   STREAMING CHAT (HYBRID MODE)
+================================= */
 
 async function send() {
   const message = msgBox.value.trim();
@@ -37,8 +135,14 @@ async function send() {
 
   addMessage(message, "user");
   msgBox.value = "";
+  msgBox.style.height = "auto";
 
-  const aiMessage = addMessage("Thinking...", "ai", true);
+  const aiDiv = addMessage("Thinking...", "ai");
+  aiDiv.classList.add("glow");
+
+  streamFinished = false;
+  remainingText = "";
+  isSpeaking = false;
 
   const response = await fetch("/chat", {
     method: "POST",
@@ -49,75 +153,151 @@ async function send() {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
 
-  aiMessage.textContent = "";
-  aiMessage.classList.remove("typing");
+  let firstChunk = true;
+  let buffer = "";
+
+  // ✅ 'g' flag is critical — without it regex.exec() loops infinitely
+  const sentenceRegex = /[^.!?]+[.!?]+/g;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    aiMessage.textContent += decoder.decode(value);
+
+    const chunk = decoder.decode(value);
+
+    if (firstChunk) {
+      aiDiv.textContent = "";
+      firstChunk = false;
+    }
+
+    aiDiv.textContent += chunk;
+    buffer += chunk;
+
+    // ✅ Reset lastIndex before scanning each new buffer
+    sentenceRegex.lastIndex = 0;
+
+    let match;
+    let lastIndex = 0;
+
+    while ((match = sentenceRegex.exec(buffer)) !== null) {
+      const sentence = match[0].trim();
+      lastIndex = sentenceRegex.lastIndex;
+
+      if (!isSpeaking) {
+        speak(sentence);
+      } else {
+        remainingText += " " + sentence;
+      }
+    }
+
+    // ✅ Only remove matched portions from buffer
+    if (lastIndex > 0) {
+      buffer = buffer.slice(lastIndex).trim();
+    }
+
     chat.scrollTop = chat.scrollHeight;
   }
 
-  speak(aiMessage.textContent);
+  aiDiv.classList.remove("glow");
+  streamFinished = true;
+
+  // Speak any leftover text that had no sentence-ending punctuation
+  if (buffer.trim().length > 0) {
+    remainingText += " " + buffer.trim();
+  }
+
+  if (!isSpeaking && remainingText.trim().length > 0) {
+    const finalBlock = remainingText.trim();
+    remainingText = "";
+    speak(finalBlock);
+  }
 }
 
-/* =====================
-   PUSH-TO-TALK
-===================== */
+/* ===============================
+   VOICE INPUT (SILENCE STOP)
+================================= */
+
 let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
 
 async function startVoice() {
-  if (!isRecording) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
+  if (isRecording) return;
 
-    mediaRecorder.ondataavailable = e => {
-      audioChunks.push(e.data);
-    };
+  const micBtn = document.getElementById("micBtn");
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    mediaRecorder.onstop = async () => {
-      const blob = new Blob(audioChunks);
+  const audioContext = new AudioContext();
+  const source = audioContext.createMediaStreamSource(stream);
+  const analyser = audioContext.createAnalyser();
 
-      const response = await fetch("/voice-input", {
-        method: "POST",
-        body: blob
-      });
+  analyser.fftSize = 2048;
+  source.connect(analyser);
 
-      const data = await response.json();
-      msgBox.value = data.text;
-      send();
-    };
+  const dataArray = new Uint8Array(analyser.fftSize);
 
-    mediaRecorder.start();
-    isRecording = true;
-    console.log("Recording started");
+  mediaRecorder = new MediaRecorder(stream);
+  audioChunks = [];
 
-  } else {
-    mediaRecorder.stop();
-    isRecording = false;
-    console.log("Recording stopped");
+  let silenceStart = null;
+  const SILENCE_THRESHOLD = 8;
+  const SILENCE_DURATION = 1500;
+
+  function detectSilence() {
+    analyser.getByteTimeDomainData(dataArray);
+
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      const value = (dataArray[i] - 128) / 128;
+      sum += value * value;
+    }
+
+    const rms = Math.sqrt(sum / dataArray.length) * 100;
+
+    if (rms < SILENCE_THRESHOLD) {
+      if (!silenceStart) silenceStart = Date.now();
+      if (Date.now() - silenceStart > SILENCE_DURATION) {
+        if (mediaRecorder.state === "recording") {
+          mediaRecorder.stop();
+        }
+      }
+    } else {
+      silenceStart = null;
+    }
+
+    if (isRecording) requestAnimationFrame(detectSilence);
   }
+
+  mediaRecorder.ondataavailable = e => {
+    audioChunks.push(e.data);
+  };
+
+  mediaRecorder.onstop = async () => {
+    micBtn.classList.remove("recording");
+    isRecording = false;
+
+    stream.getTracks().forEach(track => track.stop());
+    audioContext.close();
+
+    const blob = new Blob(audioChunks);
+
+    const response = await fetch("/voice-input", {
+      method: "POST",
+      body: blob
+    });
+
+    const data = await response.json();
+    msgBox.value = data.text;
+    send();
+  };
+
+  mediaRecorder.start();
+  isRecording = true;
+  micBtn.classList.add("recording");
+
+  detectSilence();
 }
 
-/* =====================
-   PLAY PIPER AUDIO
-===================== */
-async function speak(text) {
-  const response = await fetch("/voice-output", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text })
-  });
-
-  const blob = await response.blob();
-  const audio = new Audio(URL.createObjectURL(blob));
-  audio.play();
-}
 </script>
-
 </body>
 </html>

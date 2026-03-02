@@ -2,12 +2,92 @@ import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
 import { exec, spawn } from "child_process";
+import https from "https";
 import fs from "fs";
 import path from "path";
 import { searchVectors } from "./vectorStore.js";
 
-const app = express();
+/* ===============================
+   WHATSAPP SETUP
+================================= */
+import pkg from "whatsapp-web.js";
+import qrcode from "qrcode-terminal";
 
+const { Client, LocalAuth } = pkg;
+
+const waClient = new Client({
+  authStrategy: new LocalAuth()
+});
+
+waClient.on("qr", (qr) => {
+  console.log("Scan this QR with WhatsApp:");
+  qrcode.generate(qr, { small: true });
+});
+
+waClient.on("ready", () => {
+  console.log("WhatsApp Client is ready!");
+});
+
+waClient.initialize();
+
+/* ===============================
+   WHATSAPP AI CHAT (Wake Word Based)
+================================= */
+
+const WAKE_WORD = "jarvis"; // change this anytime
+
+waClient.on("message", async (msg) => {
+  try {
+
+    // Ignore group messages (optional)
+    if (msg.from.includes("@g.us")) return;
+
+    const text = msg.body.trim();
+
+    // Check wake word
+    if (!text.toLowerCase().startsWith(WAKE_WORD.toLowerCase())) {
+      return; // Ignore if wake word not used
+    }
+
+    console.log("Wake word detected via WhatsApp");
+
+    // Remove wake word
+    const userQuery = text.slice(WAKE_WORD.length).trim();
+
+    if (!userQuery) {
+      await msg.reply("Yes? What do you need?");
+      return;
+    }
+
+    // Send to Ollama
+    const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        prompt: userQuery,
+        stream: false,
+        temperature: 0.3
+      })
+    });
+
+    const data = await ollamaRes.json();
+
+    const reply = data.response || "I could not generate a response.";
+
+    await msg.reply(reply);
+
+  } catch (err) {
+    console.error("WhatsApp AI error:", err);
+    await msg.reply("Something went wrong.");
+  }
+});
+
+/* ===============================
+   EXPRESS APP
+================================= */
+
+const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
@@ -16,9 +96,54 @@ const OLLAMA_URL = "http://127.0.0.1:11434";
 const MODEL = "llama3:8b";
 const EMBED_MODEL = "nomic-embed-text";
 
-/* ==============================
-   TEXT CHAT (STREAMING + RAG)
-================================ */
+/* ===============================
+   ROBUST WAKE SYSTEM
+================================= */
+
+let lastWakeTime = 0;
+const WAKE_WINDOW_MS = 2000;
+
+app.post("/wake", (req, res) => {
+  lastWakeTime = Date.now();
+  console.log("Wake word triggered");
+  res.sendStatus(200);
+});
+
+app.get("/wake-status", (req, res) => {
+  const wakeActive = (Date.now() - lastWakeTime) < WAKE_WINDOW_MS;
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ wake: wakeActive });
+});
+
+/* ===============================
+   WHATSAPP SEND ENDPOINT
+================================= */
+
+app.post("/send-whatsapp", async (req, res) => {
+  const { number, message } = req.body;
+
+  if (!number || !message) {
+    return res.status(400).json({ error: "Missing number or message" });
+  }
+
+  try {
+    const chatId = number.includes("@c.us")
+      ? number
+      : `${number}@c.us`;
+
+    await waClient.sendMessage(chatId, message);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("WhatsApp error:", err);
+    res.status(500).json({ error: "Failed to send message" });
+  }
+});
+
+/* ===============================
+   STREAMING CHAT + HYBRID RAG
+================================= */
+
 app.post("/chat", async (req, res) => {
   try {
     const userQuery = req.body.message;
@@ -38,9 +163,14 @@ app.post("/chat", async (req, res) => {
     const contextChunks = searchVectors(queryEmbedding, 3);
     const context = contextChunks.join("\n");
 
-    const finalPrompt = `
-Answer strictly using the context below.
-If the answer is not in the context, say "I don't know."
+    let finalPrompt;
+
+    if (contextChunks.length > 0 && context.trim().length > 50) {
+      finalPrompt = `
+You are an intelligent assistant.
+
+Use the provided context if relevant.
+If insufficient, use general knowledge.
 
 Context:
 ${context}
@@ -50,6 +180,9 @@ ${userQuery}
 
 Answer:
 `;
+    } else {
+      finalPrompt = userQuery;
+    }
 
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");
@@ -77,16 +210,17 @@ Answer:
     }
 
     res.end();
+
   } catch (err) {
     console.error(err);
     res.status(500).end("Chat failed");
   }
 });
 
-/* ==============================
-   OFFLINE VOICE INPUT
-   WebM → WAV → Whisper
-================================ */
+/* ===============================
+   VOICE INPUT (WebM → WAV → Whisper)
+================================= */
+
 app.post("/voice-input", (req, res) => {
   const webmFile = path.join(process.cwd(), "input.webm");
   const wavFile = path.join(process.cwd(), "input.wav");
@@ -96,7 +230,6 @@ app.post("/voice-input", (req, res) => {
 
   writeStream.on("finish", () => {
 
-    // Convert WebM → WAV (16kHz mono)
     exec(
       `"${process.cwd()}\\voice\\ffmpeg\\ffmpeg.exe" -y -i "${webmFile}" -ar 16000 -ac 1 -c:a pcm_s16le "${wavFile}"`,
       (ffErr) => {
@@ -105,7 +238,6 @@ app.post("/voice-input", (req, res) => {
           return res.status(500).send("Audio conversion failed");
         }
 
-        // Run Whisper
         exec(
           `"${process.cwd()}\\voice\\whisper\\whisper-cli.exe" -m "${process.cwd()}\\voice\\whisper\\models\\ggml-tiny.en.bin" -f "${wavFile}"`,
           (error, stdout) => {
@@ -127,9 +259,10 @@ app.post("/voice-input", (req, res) => {
   });
 });
 
-/* ==============================
-   OFFLINE VOICE OUTPUT (Piper)
-================================ */
+/* ===============================
+   VOICE OUTPUT (Piper)
+================================= */
+
 app.post("/voice-output", (req, res) => {
   const text = req.body.text;
   const outputFile = path.join(process.cwd(), "response.wav");
@@ -147,7 +280,7 @@ app.post("/voice-output", (req, res) => {
 
   piper.on("close", (code) => {
     if (code !== 0) {
-      console.error("Piper exited with code:", code);
+      console.error("Piper failed");
       return res.status(500).send("TTS failed");
     }
 
@@ -159,6 +292,15 @@ app.post("/voice-output", (req, res) => {
   });
 });
 
-app.listen(5000, "0.0.0.0", () => {
-  console.log("Full Offline Voice AI running on port 5000");
+/* ===============================
+   HTTPS SERVER
+================================= */
+
+const options = {
+  key: fs.readFileSync("./localhost+1-key.pem"),
+  cert: fs.readFileSync("./localhost+1.pem")
+};
+
+https.createServer(options, app).listen(5000, "0.0.0.0", () => {
+  console.log("HTTPS Server running on port 5000");
 });
