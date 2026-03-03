@@ -11,7 +11,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "chrono-node": "^2.9.0",
     "cors": "^2.8.6",
+    "duckduckgo-search": "^1.0.7",
     "express": "^5.2.1",
     "langchain": "^1.2.28",
     "node-fetch": "^3.3.2",

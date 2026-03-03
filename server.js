@@ -1,306 +1,181 @@
 import express from "express";
-import cors from "cors";
-import fetch from "node-fetch";
-import { exec, spawn } from "child_process";
-import https from "https";
-import fs from "fs";
-import path from "path";
-import { searchVectors } from "./vectorStore.js";
-
-/* ===============================
-   WHATSAPP SETUP
-================================= */
-import pkg from "whatsapp-web.js";
 import qrcode from "qrcode-terminal";
+import pkg from "whatsapp-web.js";
+
+import {
+  loadReminders,
+  parseTime,
+  addReminder,
+  listReminders,
+  deleteReminder,
+  startScheduler,
+  flushPending
+} from "./tools/reminderTool.js";
+
+import { webSearch } from "./tools/webSearchTool.js";
 
 const { Client, LocalAuth } = pkg;
+
+const WAKE_WORD = "jarvis";
+const MODEL = "llama3:8b";
+const OLLAMA_URL = "http://127.0.0.1:11434";
+
+/* ================= WhatsApp ================= */
 
 const waClient = new Client({
   authStrategy: new LocalAuth()
 });
 
-waClient.on("qr", (qr) => {
-  console.log("Scan this QR with WhatsApp:");
+waClient.on("qr", qr => {
   qrcode.generate(qr, { small: true });
 });
 
-waClient.on("ready", () => {
-  console.log("WhatsApp Client is ready!");
+waClient.on("ready", async () => {
+  console.log("WhatsApp ready");
+  loadReminders();
+  startScheduler(waClient);
+  await flushPending(waClient);
 });
 
 waClient.initialize();
 
-/* ===============================
-   WHATSAPP AI CHAT (Wake Word Based)
-================================= */
+/* ================= LLM ================= */
 
-const WAKE_WORD = "jarvis"; // change this anytime
+async function askLLM(prompt) {
 
-waClient.on("message", async (msg) => {
+  const systemPrompt = `
+You are Jarvis.
+
+If question needs recent info, respond ONLY in JSON:
+{ "tool": "webSearch", "query": "..." }
+
+Otherwise reply in max 3 short lines.
+No markdown.
+`;
+
+  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: MODEL,
+      prompt: systemPrompt + "\nUser: " + prompt + "\nAssistant:",
+      stream: false
+    })
+  });
+
+  const data = await response.json();
+  let reply = data.response.trim();
+
   try {
+    const parsed = JSON.parse(reply);
 
-    // Ignore group messages (optional)
-    if (msg.from.includes("@g.us")) return;
+    if (parsed.tool === "webSearch") {
+      const result = await webSearch(parsed.query);
 
-    const text = msg.body.trim();
+      const summary = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: MODEL,
+          prompt: "Summarize in 2 short lines:\n" + result,
+          stream: false
+        })
+      });
 
-    // Check wake word
-    if (!text.toLowerCase().startsWith(WAKE_WORD.toLowerCase())) {
-      return; // Ignore if wake word not used
+      const summaryData = await summary.json();
+      return summaryData.response.trim();
     }
 
-    console.log("Wake word detected via WhatsApp");
+  } catch {}
 
-    // Remove wake word
-    const userQuery = text.slice(WAKE_WORD.length).trim();
+  return reply.split("\n").slice(0, 3).join("\n");
+}
 
-    if (!userQuery) {
-      await msg.reply("Yes? What do you need?");
+/* ================= Message Handler ================= */
+
+waClient.on("message_create", async msg => {
+
+  if (msg.fromMe && msg.body.startsWith("Jarvis:")) return;
+
+  let text = msg.body.trim();
+  const wakeRegex = new RegExp(`\\b${WAKE_WORD}\\b`, "i");
+
+  if (!wakeRegex.test(text)) return;
+
+  let cleanMessage = text.replace(wakeRegex, "").trim();
+
+  // Fix common typo
+  cleanMessage = cleanMessage.replace(/remainder/i, "reminder");
+
+  /* ===== Reminder Intent ===== */
+  if (/remind|reminder|set.*remind/i.test(cleanMessage)) {
+
+    const time = parseTime(cleanMessage);
+    if (!time) {
+      await msg.reply("Jarvis: I couldn't understand the time.");
       return;
     }
 
-    // Send to Ollama
-    const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        prompt: userQuery,
-        stream: false,
-        temperature: 0.3
-      })
-    });
+    if (time <= new Date()) {
+      await msg.reply("Jarvis: That time has already passed.");
+      return;
+    }
 
-    const data = await ollamaRes.json();
+    const taskMatch = cleanMessage.match(
+      /(?:remind me to|set (?:a )?reminder (?:to)?)(.*?)(?:at|in|on|today|tomorrow|next)/i
+    );
 
-    const reply = data.response || "I could not generate a response.";
+    const task = taskMatch ? taskMatch[1].trim() : "Task";
 
-    await msg.reply(reply);
+    addReminder(msg.from, task, time);
 
-  } catch (err) {
-    console.error("WhatsApp AI error:", err);
-    await msg.reply("Something went wrong.");
+    await msg.reply(
+      `Jarvis: Reminder set for ${time.toLocaleString()}`
+    );
+
+    return;
   }
+
+  /* ===== List Reminders ===== */
+  if (/list reminders/i.test(cleanMessage)) {
+
+    const userReminders = listReminders(msg.from);
+
+    if (!userReminders.length) {
+      await msg.reply("Jarvis: No active reminders.");
+      return;
+    }
+
+    const list = userReminders.map(r =>
+      `${r.id} - ${r.task} at ${new Date(r.time).toLocaleString()}`
+    ).join("\n");
+
+    await msg.reply("Jarvis:\n" + list);
+    return;
+  }
+
+  /* ===== Delete Reminder ===== */
+  if (/delete reminder/i.test(cleanMessage)) {
+
+    const idMatch = cleanMessage.match(/\d+/);
+    if (!idMatch) {
+      await msg.reply("Jarvis: Provide reminder ID.");
+      return;
+    }
+
+    deleteReminder(parseInt(idMatch[0]));
+    await msg.reply("Jarvis: Reminder deleted.");
+    return;
+  }
+
+  /* ===== Normal AI ===== */
+  const reply = await askLLM(cleanMessage);
+  await msg.reply("Jarvis: " + reply);
 });
 
-/* ===============================
-   EXPRESS APP
-================================= */
+/* ================= Express ================= */
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static("public"));
+app.get("/", (req, res) => res.send("Jarvis Running"));
 
-const OLLAMA_URL = "http://127.0.0.1:11434";
-const MODEL = "llama3:8b";
-const EMBED_MODEL = "nomic-embed-text";
-
-/* ===============================
-   ROBUST WAKE SYSTEM
-================================= */
-
-let lastWakeTime = 0;
-const WAKE_WINDOW_MS = 2000;
-
-app.post("/wake", (req, res) => {
-  lastWakeTime = Date.now();
-  console.log("Wake word triggered");
-  res.sendStatus(200);
-});
-
-app.get("/wake-status", (req, res) => {
-  const wakeActive = (Date.now() - lastWakeTime) < WAKE_WINDOW_MS;
-  res.setHeader("Cache-Control", "no-store");
-  res.json({ wake: wakeActive });
-});
-
-/* ===============================
-   WHATSAPP SEND ENDPOINT
-================================= */
-
-app.post("/send-whatsapp", async (req, res) => {
-  const { number, message } = req.body;
-
-  if (!number || !message) {
-    return res.status(400).json({ error: "Missing number or message" });
-  }
-
-  try {
-    const chatId = number.includes("@c.us")
-      ? number
-      : `${number}@c.us`;
-
-    await waClient.sendMessage(chatId, message);
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("WhatsApp error:", err);
-    res.status(500).json({ error: "Failed to send message" });
-  }
-});
-
-/* ===============================
-   STREAMING CHAT + HYBRID RAG
-================================= */
-
-app.post("/chat", async (req, res) => {
-  try {
-    const userQuery = req.body.message;
-
-    const embedRes = await fetch(`${OLLAMA_URL}/api/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: EMBED_MODEL,
-        prompt: userQuery
-      })
-    });
-
-    const embedData = await embedRes.json();
-    const queryEmbedding = embedData.embedding;
-
-    const contextChunks = searchVectors(queryEmbedding, 3);
-    const context = contextChunks.join("\n");
-
-    let finalPrompt;
-
-    if (contextChunks.length > 0 && context.trim().length > 50) {
-      finalPrompt = `
-You are an intelligent assistant.
-
-Use the provided context if relevant.
-If insufficient, use general knowledge.
-
-Context:
-${context}
-
-Question:
-${userQuery}
-
-Answer:
-`;
-    } else {
-      finalPrompt = userQuery;
-    }
-
-    res.setHeader("Content-Type", "text/plain");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        prompt: finalPrompt,
-        stream: true,
-        temperature: 0.3
-      })
-    });
-
-    for await (const chunk of ollamaRes.body) {
-      const lines = chunk.toString().split("\n").filter(Boolean);
-
-      for (const line of lines) {
-        const parsed = JSON.parse(line);
-        if (parsed.response) {
-          res.write(parsed.response);
-        }
-      }
-    }
-
-    res.end();
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).end("Chat failed");
-  }
-});
-
-/* ===============================
-   VOICE INPUT (WebM → WAV → Whisper)
-================================= */
-
-app.post("/voice-input", (req, res) => {
-  const webmFile = path.join(process.cwd(), "input.webm");
-  const wavFile = path.join(process.cwd(), "input.wav");
-
-  const writeStream = fs.createWriteStream(webmFile);
-  req.pipe(writeStream);
-
-  writeStream.on("finish", () => {
-
-    exec(
-      `"${process.cwd()}\\voice\\ffmpeg\\ffmpeg.exe" -y -i "${webmFile}" -ar 16000 -ac 1 -c:a pcm_s16le "${wavFile}"`,
-      (ffErr) => {
-        if (ffErr) {
-          console.error("FFmpeg error:", ffErr);
-          return res.status(500).send("Audio conversion failed");
-        }
-
-        exec(
-          `"${process.cwd()}\\voice\\whisper\\whisper-cli.exe" -m "${process.cwd()}\\voice\\whisper\\models\\ggml-tiny.en.bin" -f "${wavFile}"`,
-          (error, stdout) => {
-            if (error) {
-              console.error("Whisper error:", error);
-              return res.status(500).send("Whisper failed");
-            }
-
-            const cleaned = stdout
-              .replace(/\[.*?\]/g, "")
-              .replace(/\n/g, " ")
-              .trim();
-
-            res.json({ text: cleaned });
-          }
-        );
-      }
-    );
-  });
-});
-
-/* ===============================
-   VOICE OUTPUT (Piper)
-================================= */
-
-app.post("/voice-output", (req, res) => {
-  const text = req.body.text;
-  const outputFile = path.join(process.cwd(), "response.wav");
-
-  const piperPath = path.join(process.cwd(), "voice", "piper", "piper.exe");
-  const modelPath = path.join(process.cwd(), "voice", "piper", "models", "en_US-lessac-medium.onnx");
-
-  const piper = spawn(piperPath, [
-    "--model", modelPath,
-    "--output_file", outputFile
-  ]);
-
-  piper.stdin.write(text);
-  piper.stdin.end();
-
-  piper.on("close", (code) => {
-    if (code !== 0) {
-      console.error("Piper failed");
-      return res.status(500).send("TTS failed");
-    }
-
-    if (!fs.existsSync(outputFile)) {
-      return res.status(500).send("Audio not generated");
-    }
-
-    res.sendFile(outputFile);
-  });
-});
-
-/* ===============================
-   HTTPS SERVER
-================================= */
-
-const options = {
-  key: fs.readFileSync("./localhost+1-key.pem"),
-  cert: fs.readFileSync("./localhost+1.pem")
-};
-
-https.createServer(options, app).listen(5000, "0.0.0.0", () => {
-  console.log("HTTPS Server running on port 5000");
-});
+app.listen(5000, () => console.log("Server running on 5000"));
