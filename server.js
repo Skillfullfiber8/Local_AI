@@ -3,6 +3,8 @@ import qrcode from "qrcode-terminal";
 import pkg from "whatsapp-web.js";
 import fetch from "node-fetch";
 
+import { webSearch } from "./tools/searchTool.js";
+
 import {
   loadReminders,
   addReminder,
@@ -66,9 +68,7 @@ Be concise.
 
     const data = await response.json();
 
-    // DEBUG: log response excluding context tokens
-    //const { context: _, ...loggable } = data;
-    //console.log("askLLM raw response:", loggable);
+
 
     if (!data || !data.response) {
       console.log("Ollama returned no response field:", data);
@@ -120,9 +120,7 @@ ${userText}
 
     const data = await response.json();
 
-    // DEBUG LOG (excluding context tokens)
-    //const { context: _, ...loggable } = data;
-    //console.log("Reminder LLM raw:", loggable);
+
 
     if (!data || !data.response) {
       console.log("Invalid LLM response structure");
@@ -144,6 +142,54 @@ ${userText}
   }
 }
 
+/* ================= Intent Classifier ================= */
+
+async function classifyIntent(message) {
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        prompt: `
+You are an intent classifier for an AI assistant.
+
+Classify the user message into one of these intents:
+- "reminder" : user wants to set, list, or delete a reminder
+- "search"   : user wants to search the web, look something up, or get current info
+- "general"  : anything else (chat, questions the AI can answer itself)
+
+Return ONLY valid JSON. No explanation. No markdown.
+
+Format:
+{ "intent": "reminder" | "search" | "general", "query": "<cleaned up user query>" }
+
+User message: ${message}
+`,
+        stream: false,
+        temperature: 0
+      })
+    });
+
+    const data = await response.json();
+    if (!data || !data.response) return { intent: "general", query: message };
+
+    let raw = data.response.trim();
+    if (!raw.endsWith("}")) raw += "}";
+
+    const jsonMatch = raw.match(/\{[^{}]*\}/);
+    if (!jsonMatch) return { intent: "general", query: message };
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    console.log("Intent:", parsed);
+    return parsed;
+
+  } catch (err) {
+    console.log("Intent classifier error:", err.message);
+    return { intent: "general", query: message };
+  }
+}
+
 /* ================= Message Handler ================= */
 
 waClient.on("message_create", async msg => {
@@ -159,9 +205,38 @@ waClient.on("message_create", async msg => {
 
   let cleanMessage = text.replace(wakeRegex, "").trim();
 
+  /* ===== Classify Intent ===== */
+
+  const { intent, query } = await classifyIntent(cleanMessage);
+
   /* ===== Reminder Intent ===== */
 
-  if (/remind|reminder|set/i.test(cleanMessage)) {
+  if (intent === "reminder") {
+
+    // Handle list and delete via regex since they need no LLM extraction
+    if (/list reminders/i.test(cleanMessage)) {
+      const userReminders = listReminders(msg.from);
+      if (!userReminders.length) {
+        await msg.reply("Jarvis: No active reminders.");
+        return;
+      }
+      const list = userReminders.map(r =>
+        `${r.id} - ${r.task} at ${new Date(r.time).toLocaleString()}`
+      ).join("\n");
+      await msg.reply("Jarvis:\n" + list);
+      return;
+    }
+
+    if (/delete reminder/i.test(cleanMessage)) {
+      const idMatch = cleanMessage.match(/\d+/);
+      if (!idMatch) {
+        await msg.reply("Jarvis: Provide reminder ID.");
+        return;
+      }
+      deleteReminder(parseInt(idMatch[0]));
+      await msg.reply("Jarvis: Reminder deleted.");
+      return;
+    }
 
     try {
 
@@ -211,6 +286,7 @@ waClient.on("message_create", async msg => {
         return;
       }
 
+      console.log(`Reminder set → task: "${parsed.task}" | time: ${reminderTime.toLocaleString()}`);
       addReminder(msg.from, parsed.task, reminderTime);
 
       await msg.reply(
@@ -225,42 +301,16 @@ waClient.on("message_create", async msg => {
     return;
   }
 
-  /* ===== List Reminders ===== */
+  /* ===== Search Intent ===== */
 
-  if (/list reminders/i.test(cleanMessage)) {
-
-    const userReminders = listReminders(msg.from);
-
-    if (!userReminders.length) {
-      await msg.reply("Jarvis: No active reminders.");
-      return;
-    }
-
-    const list = userReminders.map(r =>
-      `${r.id} - ${r.task} at ${new Date(r.time).toLocaleString()}`
-    ).join("\n");
-
-    await msg.reply("Jarvis:\n" + list);
+  if (intent === "search") {
+    const results = await webSearch(query || cleanMessage);
+    const summary = await askLLM(`Summarize these search results in 3 lines:\n${results}`);
+    await msg.reply("Jarvis: " + summary);
     return;
   }
 
-  /* ===== Delete Reminder ===== */
-
-  if (/delete reminder/i.test(cleanMessage)) {
-
-    const idMatch = cleanMessage.match(/\d+/);
-
-    if (!idMatch) {
-      await msg.reply("Jarvis: Provide reminder ID.");
-      return;
-    }
-
-    deleteReminder(parseInt(idMatch[0]));
-    await msg.reply("Jarvis: Reminder deleted.");
-    return;
-  }
-
-  /* ===== Normal AI ===== */
+  /* ===== General AI ===== */
 
   const reply = await askLLM(cleanMessage);
   await msg.reply("Jarvis: " + reply);

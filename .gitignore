@@ -3,3 +3,4 @@ node_modules/
 wake_env/
 .wwebjs_cache/
 .wwebjs_auth/
+voice/
