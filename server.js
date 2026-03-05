@@ -2,6 +2,9 @@ import express from "express";
 import qrcode from "qrcode-terminal";
 import pkg from "whatsapp-web.js";
 import fetch from "node-fetch";
+import fs from "fs";
+import dotenv from "dotenv";
+dotenv.config();
 
 import { webSearch } from "./tools/searchTool.js";
 
@@ -16,9 +19,51 @@ import {
 
 const { Client, LocalAuth } = pkg;
 
-const WAKE_WORD = "jarvis";
-const MODEL = "llama3:8b";
-const OLLAMA_URL = "http://127.0.0.1:11434";
+const MODEL = process.env.MODEL;
+const OLLAMA_URL = process.env.OLLAMA_URL;
+const MAX_HISTORY = 10;
+const VIP_NUMBERS = process.env.VIP_NUMBERS.split(",").map(n => n.trim());
+
+/* ================= Memory ================= */
+
+const userMemory = new Map();
+const MEMORY_DIR = "./memory";
+
+if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR);
+
+function memoryPath(userId) {
+  return `${MEMORY_DIR}/${userId.replace(/[^a-z0-9]/gi, "_")}.json`;
+}
+
+function loadDiskMemory(userId) {
+  try {
+    const data = fs.readFileSync(memoryPath(userId), "utf8");
+    userMemory.set(userId, JSON.parse(data));
+  } catch {
+    userMemory.set(userId, []);
+  }
+}
+
+function saveDiskMemory(userId) {
+  const path = memoryPath(userId);
+  fs.writeFileSync(path, JSON.stringify(userMemory.get(userId)));
+  console.log("Memory saved:", path);
+}
+
+function getHistory(userId) {
+  if (!userMemory.has(userId)) {
+    if (VIP_NUMBERS.includes(userId)) loadDiskMemory(userId);
+    else userMemory.set(userId, []);
+  }
+  return userMemory.get(userId);
+}
+
+function addToHistory(userId, role, content) {
+  const history = getHistory(userId);
+  history.push({ role, content });
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+  if (VIP_NUMBERS.includes(userId)) saveDiskMemory(userId);
+}
 
 /* ================= WhatsApp ================= */
 
@@ -41,18 +86,31 @@ waClient.initialize();
 
 /* ================= LLM ================= */
 
-async function askLLM(prompt) {
+async function askLLM(prompt, userId = null) {
   const now = new Date();
 
   const systemPrompt = `
-You are Jarvis.
+You are Jarvis, an AI assistant.
 IMPORTANT FACTS (always use these, do not guess):
 - Current date: ${now.toLocaleDateString()}
 - Current time: ${now.toLocaleTimeString()}
-Respond in maximum 3 short lines.
-No markdown.
-Be concise.
+
+STRICT RULES (never break these):
+- Never use markdown, backticks, or code blocks
+- Never say "Sir", "Sure", "Certainly" or any filler words
+- For code, give the complete working code as plain text with no formatting, no matter how long
+- For non-code responses, keep it under 5 lines
+- Be direct and concise
 `;
+
+  const history = userId ? getHistory(userId) : [];
+  const historyText = history.map(m =>
+    `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`
+  ).join("\n");
+
+  const fullPrompt = systemPrompt
+    + (historyText ? "\n" + historyText + "\n" : "")
+    + "\nUser: " + prompt + "\nAssistant:";
 
   try {
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
@@ -60,7 +118,7 @@ Be concise.
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: MODEL,
-        prompt: systemPrompt + "\nUser: " + prompt + "\nAssistant:",
+        prompt: fullPrompt,
         stream: false,
         temperature: 0.3
       })
@@ -68,14 +126,23 @@ Be concise.
 
     const data = await response.json();
 
-
-
     if (!data || !data.response) {
       console.log("Ollama returned no response field:", data);
       return "I couldn't process that right now.";
     }
 
-    return data.response.trim().split("\n").slice(0, 3).join("\n");
+    const raw = data.response.trim()
+      .replace(/```[\w]*\n?/g, "")
+      .replace(/`/g, "")
+      .replace(/^(Sir[,!]?\s*|Sure[,!]?\s*|Certainly[,!]?\s*)/i, "")
+      .trim();
+
+    const reply = raw;
+    if (userId) {
+      addToHistory(userId, "user", prompt);
+      addToHistory(userId, "assistant", reply);
+    }
+    return reply;
 
   } catch (err) {
     console.log("askLLM error:", err);
@@ -86,9 +153,7 @@ Be concise.
 /* ================= AI Reminder Extraction ================= */
 
 async function extractReminderDetails(userText) {
-
   try {
-
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -120,15 +185,12 @@ ${userText}
 
     const data = await response.json();
 
-
-
     if (!data || !data.response) {
       console.log("Invalid LLM response structure");
       return null;
     }
 
     const raw = data.response.trim();
-
     if (!raw) {
       console.log("Empty LLM response");
       return null;
@@ -156,8 +218,8 @@ You are an intent classifier for an AI assistant.
 
 Classify the user message into one of these intents:
 - "reminder" : user wants to set, list, or delete a reminder
-- "search"   : user wants to search the web, look something up, or get current info
-- "general"  : anything else (chat, questions the AI can answer itself)
+- "search"   : user wants to search the web, look something up, or get current info that the AI cannot answer from memory or its own knowledge
+- "general"  : anything else (chat, questions the AI can answer itself or from conversation history)
 
 Return ONLY valid JSON. No explanation. No markdown.
 
@@ -190,22 +252,30 @@ User message: ${message}
   }
 }
 
+/* ================= Resolve WhatsApp ID ================= */
+
+async function resolveId(msg) {
+  try {
+    const contact = await msg.getContact();
+    return contact.id._serialized;
+  } catch {
+    return msg.from;
+  }
+}
+
 /* ================= Message Handler ================= */
 
 waClient.on("message_create", async msg => {
 
-  if (msg.fromMe && msg.body.startsWith("Jarvis:")) return;
+  if (msg.fromMe) return;
 
-  let text = msg.body.trim();
-  const wakeRegex = new RegExp(`\\b${WAKE_WORD}\\b`, "i");
+  const text = msg.body.trim();
+  if (!text) return;
 
-  if (!wakeRegex.test(text)) return;
+  const userId = await resolveId(msg);
+  console.log("Message from:", userId, "→", text);
 
-  console.log("wake word triggered:", text);
-
-  let cleanMessage = text.replace(wakeRegex, "").trim();
-
-  /* ===== Classify Intent ===== */
+  const cleanMessage = text;
 
   const { intent, query } = await classifyIntent(cleanMessage);
 
@@ -213,9 +283,8 @@ waClient.on("message_create", async msg => {
 
   if (intent === "reminder") {
 
-    // Handle list and delete via regex since they need no LLM extraction
     if (/list reminders/i.test(cleanMessage)) {
-      const userReminders = listReminders(msg.from);
+      const userReminders = listReminders(userId);
       if (!userReminders.length) {
         await msg.reply("Jarvis: No active reminders.");
         return;
@@ -239,7 +308,6 @@ waClient.on("message_create", async msg => {
     }
 
     try {
-
       const parsedRaw = await extractReminderDetails(cleanMessage);
 
       if (!parsedRaw) {
@@ -251,11 +319,8 @@ waClient.on("message_create", async msg => {
       let parsed;
 
       try {
-        // Extract only the first complete JSON object, ignoring hallucinated content after it
-        // Auto-close truncated JSON if model cuts off before closing brace
         let cleanRaw = parsedRaw.trim();
         if (!cleanRaw.endsWith("}")) cleanRaw += "}";
-
         const jsonMatch = cleanRaw.match(/\{[^{}]*\}/);
         if (!jsonMatch) {
           console.log("No JSON object found in LLM response:", parsedRaw);
@@ -287,7 +352,7 @@ waClient.on("message_create", async msg => {
       }
 
       console.log(`Reminder set → task: "${parsed.task}" | time: ${reminderTime.toLocaleString()}`);
-      addReminder(msg.from, parsed.task, reminderTime);
+      addReminder(userId, parsed.task, reminderTime);
 
       await msg.reply(
         `Jarvis: Reminder set for "${parsed.task}" at ${reminderTime.toLocaleString()}`
@@ -305,14 +370,14 @@ waClient.on("message_create", async msg => {
 
   if (intent === "search") {
     const results = await webSearch(query || cleanMessage);
-    const summary = await askLLM(`Summarize these search results in 3 lines:\n${results}`);
+    const summary = await askLLM(`Summarize these search results in 3 lines:\n${results}`, userId);
     await msg.reply("Jarvis: " + summary);
     return;
   }
 
   /* ===== General AI ===== */
 
-  const reply = await askLLM(cleanMessage);
+  const reply = await askLLM(cleanMessage, userId);
   await msg.reply("Jarvis: " + reply);
 
 });
@@ -322,4 +387,4 @@ waClient.on("message_create", async msg => {
 const app = express();
 app.get("/", (req, res) => res.send("Jarvis Running"));
 
-app.listen(5000, () => console.log("Server running on 5000"));
+app.listen(process.env.PORT || 5000, () => console.log(`Server running on ${process.env.PORT || 5000}`));

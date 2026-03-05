@@ -4,3 +4,6 @@ wake_env/
 .wwebjs_cache/
 .wwebjs_auth/
 voice/
+memory/
+.env
+storage/
