@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer } from "http";
+import { WebSocketServer } from "ws";
 import qrcode from "qrcode-terminal";
 import pkg from "whatsapp-web.js";
 import fetch from "node-fetch";
@@ -74,15 +76,19 @@ function addToHistory(userId, role, content) {
   if (VIP_NUMBERS.includes(userId)) saveDiskMemory(userId);
 }
 
+/* ================= Memory Filter ================= */
+
+const TRIVIAL = /^(hi|hello|hey|ok|okay|thanks|thank you|bye|good|great|sure|yes|no|👋|😊|🙏)+[!?.]*$/i;
+
+function shouldStore(text) {
+  return text.length > 10 && !TRIVIAL.test(text.trim());
+}
+
 /* ================= WhatsApp ================= */
 
-const waClient = new Client({
-  authStrategy: new LocalAuth()
-});
+const waClient = new Client({ authStrategy: new LocalAuth() });
 
-waClient.on("qr", qr => {
-  qrcode.generate(qr, { small: true });
-});
+waClient.on("qr", qr => qrcode.generate(qr, { small: true }));
 
 waClient.on("ready", async () => {
   console.log("WhatsApp ready");
@@ -125,12 +131,7 @@ STRICT RULES (never break these):
     const response = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        prompt: fullPrompt,
-        stream: false,
-        temperature: 0.3
-      })
+      body: JSON.stringify({ model: MODEL, prompt: fullPrompt, stream: false, temperature: 0.3 })
     });
 
     const data = await response.json();
@@ -146,12 +147,11 @@ STRICT RULES (never break these):
       .replace(/^(Sir[,!]?\s*|Sure[,!]?\s*|Certainly[,!]?\s*)/i, "")
       .trim();
 
-    const reply = raw;
-    if (userId) {
+    if (userId && shouldStore(prompt)) {
       addToHistory(userId, "user", prompt);
-      addToHistory(userId, "assistant", reply);
+      addToHistory(userId, "assistant", raw);
     }
-    return reply;
+    return raw;
 
   } catch (err) {
     console.log("askLLM error:", err);
@@ -170,22 +170,14 @@ async function extractReminderDetails(userText) {
         model: MODEL,
         prompt: `
 You are a strict JSON reminder extractor.
-
-Return ONLY valid JSON.
-No explanations.
-No markdown.
-No extra text.
-
+Return ONLY valid JSON. No explanations. No markdown. No extra text.
 Format:
 {
   "task": "...",
   "datetime": "YYYY-MM-DDTHH:MM:SS"
 }
-
 Current datetime: ${new Date().toISOString()}
-
-User input:
-${userText}
+User input: ${userText}
 `,
         stream: false,
         temperature: 0
@@ -193,19 +185,9 @@ ${userText}
     });
 
     const data = await response.json();
-
-    if (!data || !data.response) {
-      console.log("Invalid LLM response structure");
-      return null;
-    }
-
+    if (!data || !data.response) return null;
     const raw = data.response.trim();
-    if (!raw) {
-      console.log("Empty LLM response");
-      return null;
-    }
-
-    return raw;
+    return raw || null;
 
   } catch (err) {
     console.log("Reminder LLM fetch error:", err);
@@ -224,17 +206,12 @@ async function classifyIntent(message) {
         model: MODEL,
         prompt: `
 You are an intent classifier for an AI assistant.
-
 Classify the user message into one of these intents:
 - "reminder" : user wants to set, list, or delete a reminder
 - "search"   : user wants to search the web, look something up, or get current info that the AI cannot answer from memory or its own knowledge
 - "general"  : anything else (chat, questions the AI can answer itself or from conversation history)
-
 Return ONLY valid JSON. No explanation. No markdown.
-
-Format:
-{ "intent": "reminder" | "search" | "general", "query": "<cleaned up user query>" }
-
+Format: { "intent": "reminder" | "search" | "general", "query": "<cleaned up user query>" }
 User message: ${message}
 `,
         stream: false,
@@ -247,7 +224,6 @@ User message: ${message}
 
     let raw = data.response.trim();
     if (!raw.endsWith("}")) raw += "}";
-
     const jsonMatch = raw.match(/\{[^{}]*\}/);
     if (!jsonMatch) return { intent: "general", query: message };
 
@@ -272,7 +248,20 @@ async function resolveId(msg) {
   }
 }
 
-/* ================= Message Handler ================= */
+/* ================= Process Message (shared by all platforms) ================= */
+
+async function processMessage(text, resolvedUserId) {
+  const { intent, query } = await classifyIntent(text);
+
+  if (intent === "search") {
+    const results = await webSearch(query || text);
+    return await askLLM(`Summarize these search results in 3 lines:\n${results}`, resolvedUserId);
+  }
+
+  return await askLLM(text, resolvedUserId);
+}
+
+/* ================= WhatsApp Message Handler ================= */
 
 waClient.on("message_create", async msg => {
   console.log("RAW MSG:", msg.fromMe, msg.type, msg.body);
@@ -296,149 +285,194 @@ waClient.on("message_create", async msg => {
 
   const wakeRegex = new RegExp(`\\b${WAKE_WORD}\\b`, "i");
   if (!wakeRegex.test(text)) return;
-
-  // Ignore Jarvis's own replies to avoid loops
   if (msg.fromMe && text.startsWith("Jarvis:")) return;
 
   const userId = await resolveId(msg);
-  console.log("Wake word triggered from:", userId, "→", text);
 
-  /* ===== Auth Check ===== */
-
-  // If user is pending code entry, handle it before anything else
+  // Handle pending auth (code entry)
   if (isPendingAuth(userId)) {
-    const profileName = linkWithCode(userId, text.trim());
+    const profileName = linkWithCode(userId, text.replace(wakeRegex, "").trim());
     if (profileName) {
       clearPendingAuth(userId);
-      await msg.reply(`Jarvis: Identity verified. Welcome, ${profileName}. Your memory has been linked to this device.`);
+      await msg.reply(`Jarvis: Identity verified. Welcome, ${profileName}.`);
     } else {
-      await msg.reply("Jarvis: Invalid code. Try again or say 'Jarvis' to restart.");
       clearPendingAuth(userId);
+      await msg.reply("Jarvis: Invalid code.");
     }
     return;
   }
 
-  // Check if this ID is linked to a VIP profile
-  const vipProfile = getVIPProfile(userId);
-  const resolvedUserId = vipProfile ? `vip:${vipProfile.name}` : userId;
+  // Resolve to phone-based key (WhatsApp numbers are already unique)
+  const resolvedUserId = userId;
+  console.log("Wake word triggered from:", resolvedUserId, "→", text);
 
-  // Only prompt for code on non-WhatsApp platforms (Telegram, etc.)
   const isWhatsApp = userId.endsWith("@c.us") || userId.endsWith("@lid");
-  if (!vipProfile && !isWhatsApp) {
+  if (!isWhatsApp) {
     setPendingAuth(userId);
-    await msg.reply("Jarvis: Enter your code to link this device to your profile, or continue without a profile for limited access.");
+    await msg.reply("Jarvis: Enter your code to link this device.");
     return;
   }
 
   const cleanMessage = text.replace(wakeRegex, "").trim();
+
+  // Reminder intents
+  if (/list reminders/i.test(cleanMessage)) {
+    const userReminders = listReminders(resolvedUserId);
+    if (!userReminders.length) { await msg.reply("Jarvis: No active reminders."); return; }
+    const list = userReminders.map(r => `${r.id} - ${r.task} at ${new Date(r.time).toLocaleString()}`).join("\n");
+    await msg.reply("Jarvis:\n" + list);
+    return;
+  }
+
+  if (/delete reminder/i.test(cleanMessage)) {
+    const idMatch = cleanMessage.match(/\d+/);
+    if (!idMatch) { await msg.reply("Jarvis: Provide reminder ID."); return; }
+    deleteReminder(parseInt(idMatch[0]));
+    await msg.reply("Jarvis: Reminder deleted.");
+    return;
+  }
+
   const { intent, query } = await classifyIntent(cleanMessage);
 
-  /* ===== Reminder Intent ===== */
-
   if (intent === "reminder") {
-
-    if (/list reminders/i.test(cleanMessage)) {
-      const userReminders = listReminders(resolvedUserId);
-      if (!userReminders.length) {
-        await msg.reply("Jarvis: No active reminders.");
-        return;
-      }
-      const list = userReminders.map(r =>
-        `${r.id} - ${r.task} at ${new Date(r.time).toLocaleString()}`
-      ).join("\n");
-      await msg.reply("Jarvis:\n" + list);
-      return;
-    }
-
-    if (/delete reminder/i.test(cleanMessage)) {
-      const idMatch = cleanMessage.match(/\d+/);
-      if (!idMatch) {
-        await msg.reply("Jarvis: Provide reminder ID.");
-        return;
-      }
-      deleteReminder(parseInt(idMatch[0]));
-      await msg.reply("Jarvis: Reminder deleted.");
-      return;
-    }
-
     try {
       const parsedRaw = await extractReminderDetails(cleanMessage);
+      if (!parsedRaw) { await msg.reply("Jarvis: I couldn't understand the reminder."); return; }
 
-      if (!parsedRaw) {
-        console.log("Reminder LLM returned null/empty");
-        await msg.reply("Jarvis: I couldn't understand the reminder.");
-        return;
-      }
+      let cleanRaw = parsedRaw.trim();
+      if (!cleanRaw.endsWith("}")) cleanRaw += "}";
+      const jsonMatch = cleanRaw.match(/\{[^{}]*\}/);
+      if (!jsonMatch) { await msg.reply("Jarvis: Reminder format error."); return; }
 
-      let parsed;
-
-      try {
-        let cleanRaw = parsedRaw.trim();
-        if (!cleanRaw.endsWith("}")) cleanRaw += "}";
-        const jsonMatch = cleanRaw.match(/\{[^{}]*\}/);
-        if (!jsonMatch) {
-          console.log("No JSON object found in LLM response:", parsedRaw);
-          await msg.reply("Jarvis: Reminder format error.");
-          return;
-        }
-        parsed = JSON.parse(jsonMatch[0]);
-      } catch (jsonErr) {
-        console.log("Invalid JSON from LLM:", parsedRaw);
-        await msg.reply("Jarvis: Reminder format error.");
-        return;
-      }
-
-      if (!parsed.task || !parsed.datetime) {
-        await msg.reply("Jarvis: Reminder details incomplete.");
-        return;
-      }
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!parsed.task || !parsed.datetime) { await msg.reply("Jarvis: Reminder details incomplete."); return; }
 
       const reminderTime = new Date(parsed.datetime);
+      if (isNaN(reminderTime.getTime())) { await msg.reply("Jarvis: Invalid time format."); return; }
+      if (reminderTime <= new Date()) { await msg.reply("Jarvis: That time has already passed."); return; }
 
-      if (isNaN(reminderTime.getTime())) {
-        await msg.reply("Jarvis: Invalid time format.");
-        return;
-      }
-
-      if (reminderTime <= new Date()) {
-        await msg.reply("Jarvis: That time has already passed.");
-        return;
-      }
-
-      console.log(`Reminder set → task: "${parsed.task}" | time: ${reminderTime.toLocaleString()}`);
       addReminder(resolvedUserId, parsed.task, reminderTime);
-
-      await msg.reply(
-        `Jarvis: Reminder set for "${parsed.task}" at ${reminderTime.toLocaleString()}`
-      );
+      await msg.reply(`Jarvis: Reminder set for "${parsed.task}" at ${reminderTime.toLocaleString()}`);
 
     } catch (err) {
       console.log("Reminder parsing error:", err);
       await msg.reply("Jarvis: I couldn't process that reminder.");
     }
-
     return;
   }
 
-  /* ===== Search Intent ===== */
-
-  if (intent === "search") {
-    const results = await webSearch(query || cleanMessage);
-    const summary = await askLLM(`Summarize these search results in 3 lines:\n${results}`, userId);
-    await msg.reply("Jarvis: " + summary);
-    return;
-  }
-
-  /* ===== General AI ===== */
-
-  const reply = await askLLM(cleanMessage, userId);
+  const reply = await processMessage(cleanMessage, resolvedUserId);
   await msg.reply("Jarvis: " + reply);
-
 });
 
-/* ================= Express ================= */
+/* ================= Express + WebSocket ================= */
 
 const app = express();
+const server = createServer(app);
+const wss = new WebSocketServer({ server });
+
+app.use(express.json());
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  next();
+});
+
+wss.on("connection", (ws) => {
+  console.log("WebChat connected");
+
+  ws.on("message", async (raw) => {
+    try {
+      const { type, payload } = JSON.parse(raw);
+
+      // Check if already linked on reconnect
+      if (type === "auth_check") {
+        const { platformId } = payload;
+        const vipProfile = getVIPProfile(platformId);
+        if (vipProfile) {
+          const phoneKey = vipProfile.linkedIds.find(id => id.endsWith("@c.us"));
+          if (phoneKey) ws.phoneKey = phoneKey;
+          ws.send(JSON.stringify({ type: "auth_success", name: vipProfile.name }));
+        } else {
+          ws.send(JSON.stringify({ type: "need_auth" }));
+        }
+        return;
+      }
+
+      // Step 1 — phone number entry
+      if (type === "auth_phone") {
+        const { phone } = payload;
+        const phoneId = phone.trim() + "@c.us";
+        const vipProfile = getVIPProfile(phoneId);
+        if (vipProfile) {
+          ws.send(JSON.stringify({ type: "need_code" }));
+        } else {
+          ws.send(JSON.stringify({ type: "auth_fail" }));
+        }
+        return;
+      }
+
+      // Step 2 — code entry
+      if (type === "auth") {
+        const { platformId, phone, code } = payload;
+        const phoneId = phone.trim() + "@c.us";
+        const vipProfile = getVIPProfile(phoneId);
+        if (vipProfile && vipProfile.code === code.trim()) {
+          linkWithCode(platformId, code.trim());
+          clearPendingAuth(platformId);
+          ws.phoneKey = phoneId;
+          ws.send(JSON.stringify({ type: "auth_success", name: vipProfile.name }));
+        } else {
+          ws.send(JSON.stringify({ type: "auth_fail" }));
+        }
+        return;
+      }
+
+      // Chat message
+      if (type === "message") {
+        const { platformId, text } = payload;
+        const resolvedUserId = ws.phoneKey || platformId;
+        const vipProfile = getVIPProfile(resolvedUserId) || getVIPProfile(platformId);
+        if (!vipProfile) {
+          ws.send(JSON.stringify({ type: "need_auth" }));
+          return;
+        }
+        console.log("WebChat message from:", resolvedUserId, "→", text);
+        const reply = await processMessage(text, resolvedUserId);
+        ws.send(JSON.stringify({ type: "reply", text: reply }));
+        return;
+      }
+
+      // Voice message
+      if (type === "voice") {
+        const { platformId, audio, mimetype } = payload;
+        const resolvedUserId = ws.phoneKey || platformId;
+        const vipProfile = getVIPProfile(resolvedUserId) || getVIPProfile(platformId);
+        if (!vipProfile) {
+          ws.send(JSON.stringify({ type: "need_auth" }));
+          return;
+        }
+        const transcript = await transcribeAudio(audio, mimetype);
+        if (!transcript) {
+          ws.send(JSON.stringify({ type: "error", text: "Could not transcribe audio." }));
+          return;
+        }
+        console.log("WebChat voice transcript:", transcript);
+        ws.send(JSON.stringify({ type: "transcript", text: transcript }));
+        const reply = await processMessage(transcript, resolvedUserId);
+        ws.send(JSON.stringify({ type: "reply", text: reply }));
+        return;
+      }
+
+    } catch (err) {
+      console.log("WebSocket error:", err.message);
+      ws.send(JSON.stringify({ type: "error", text: "Something went wrong." }));
+    }
+  });
+
+  ws.on("close", () => console.log("WebChat disconnected"));
+});
+
 app.get("/", (req, res) => res.send("Jarvis Running"));
 
-app.listen(process.env.PORT || 5000, () => console.log(`Server running on ${process.env.PORT || 5000}`));
+server.listen(process.env.PORT || 5000, () => console.log(`Server running on ${process.env.PORT || 5000}`));

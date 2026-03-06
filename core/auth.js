@@ -23,7 +23,7 @@ export function getVIPProfile(platformId) {
   const users = loadUsers();
   for (const [name, profile] of Object.entries(users)) {
     if (profile.linkedIds.includes(platformId)) {
-      return { name, ...profile };
+      return { name, code: profile.code, ...profile };
     }
   }
   return null;
