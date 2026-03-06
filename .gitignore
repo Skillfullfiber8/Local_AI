@@ -7,3 +7,4 @@ voice/
 memory/
 .env
 storage/
+users.json

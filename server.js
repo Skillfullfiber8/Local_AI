@@ -7,6 +7,14 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { webSearch } from "./tools/searchTool.js";
+import { transcribeAudio } from "./tools/voiceTool.js";
+import {
+  getVIPProfile,
+  linkWithCode,
+  setPendingAuth,
+  isPendingAuth,
+  clearPendingAuth
+} from "./core/auth.js";
 
 import {
   loadReminders,
@@ -19,6 +27,7 @@ import {
 
 const { Client, LocalAuth } = pkg;
 
+const WAKE_WORD = process.env.WAKE_WORD || "jarvis";
 const MODEL = process.env.MODEL;
 const OLLAMA_URL = process.env.OLLAMA_URL;
 const MAX_HISTORY = 10;
@@ -266,17 +275,62 @@ async function resolveId(msg) {
 /* ================= Message Handler ================= */
 
 waClient.on("message_create", async msg => {
+  console.log("RAW MSG:", msg.fromMe, msg.type, msg.body);
 
-  if (msg.fromMe) return;
+  let text = msg.body.trim();
 
-  const text = msg.body.trim();
+  // Handle voice notes
+  if (msg.hasMedia && (msg.type === "ptt" || msg.type === "audio")) {
+    const media = await msg.downloadMedia();
+    console.log("Voice note received, transcribing...");
+    const transcript = await transcribeAudio(media.data, media.mimetype);
+    if (!transcript) {
+      await msg.reply("Jarvis: Could not transcribe audio.");
+      return;
+    }
+    console.log("Transcript:", transcript);
+    text = transcript;
+  }
+
   if (!text) return;
 
+  const wakeRegex = new RegExp(`\\b${WAKE_WORD}\\b`, "i");
+  if (!wakeRegex.test(text)) return;
+
+  // Ignore Jarvis's own replies to avoid loops
+  if (msg.fromMe && text.startsWith("Jarvis:")) return;
+
   const userId = await resolveId(msg);
-  console.log("Message from:", userId, "→", text);
+  console.log("Wake word triggered from:", userId, "→", text);
 
-  const cleanMessage = text;
+  /* ===== Auth Check ===== */
 
+  // If user is pending code entry, handle it before anything else
+  if (isPendingAuth(userId)) {
+    const profileName = linkWithCode(userId, text.trim());
+    if (profileName) {
+      clearPendingAuth(userId);
+      await msg.reply(`Jarvis: Identity verified. Welcome, ${profileName}. Your memory has been linked to this device.`);
+    } else {
+      await msg.reply("Jarvis: Invalid code. Try again or say 'Jarvis' to restart.");
+      clearPendingAuth(userId);
+    }
+    return;
+  }
+
+  // Check if this ID is linked to a VIP profile
+  const vipProfile = getVIPProfile(userId);
+  const resolvedUserId = vipProfile ? `vip:${vipProfile.name}` : userId;
+
+  // Only prompt for code on non-WhatsApp platforms (Telegram, etc.)
+  const isWhatsApp = userId.endsWith("@c.us") || userId.endsWith("@lid");
+  if (!vipProfile && !isWhatsApp) {
+    setPendingAuth(userId);
+    await msg.reply("Jarvis: Enter your code to link this device to your profile, or continue without a profile for limited access.");
+    return;
+  }
+
+  const cleanMessage = text.replace(wakeRegex, "").trim();
   const { intent, query } = await classifyIntent(cleanMessage);
 
   /* ===== Reminder Intent ===== */
@@ -284,7 +338,7 @@ waClient.on("message_create", async msg => {
   if (intent === "reminder") {
 
     if (/list reminders/i.test(cleanMessage)) {
-      const userReminders = listReminders(userId);
+      const userReminders = listReminders(resolvedUserId);
       if (!userReminders.length) {
         await msg.reply("Jarvis: No active reminders.");
         return;
@@ -352,7 +406,7 @@ waClient.on("message_create", async msg => {
       }
 
       console.log(`Reminder set → task: "${parsed.task}" | time: ${reminderTime.toLocaleString()}`);
-      addReminder(userId, parsed.task, reminderTime);
+      addReminder(resolvedUserId, parsed.task, reminderTime);
 
       await msg.reply(
         `Jarvis: Reminder set for "${parsed.task}" at ${reminderTime.toLocaleString()}`
