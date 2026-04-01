@@ -8,3 +8,5 @@ memory/
 .env
 storage/
 users.json
+localhost+1-key.pem
+localhost+1.pem
