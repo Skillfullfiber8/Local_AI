@@ -63,6 +63,19 @@ async function ollamaFetch(prompt, temperature = 0) {
   return data?.response?.trim() || null;
 }
 
+
+
+async function askLLMRaw(prompt) {
+  try {
+    const raw = await ollamaFetch(prompt, 0.2);
+    return raw?.trim() || null;
+  } catch (err) {
+    console.log("askLLMRaw error:", err);
+    return null;
+  }
+}
+
+
 /* ================= LLM ================= */
 
 async function askLLM(prompt, userId = null) {
@@ -136,36 +149,6 @@ User input: ${userText}
   }
 }
 
-/* ================= Intent Classifier ================= */
-
-async function classifyIntent(message) {
-  try {
-    let raw = await ollamaFetch(`
-You are an intent classifier for an AI assistant.
-Classify the user message into one of these intents:
-- "reminder" : user wants to set, list, or delete a reminder
-- "search"   : user wants to search the web, look something up, or get current info that the AI cannot answer from memory or its own knowledge
-- "general"  : anything else — including questions about the user, questions Jarvis can answer from memory or profile, or personal/subjective questions
-Return ONLY valid JSON. No explanation. No markdown.
-Format: { "intent": "reminder" | "search" | "general", "query": "<cleaned up user query>" }
-User message: ${message}
-`);
-
-    if (!raw) return { intent: "general", query: message };
-    if (!raw.endsWith("}")) raw += "}";
-    const jsonMatch = raw.match(/\{[^{}]*\}/);
-    if (!jsonMatch) return { intent: "general", query: message };
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    console.log("Intent:", parsed);
-    return parsed;
-
-  } catch (err) {
-    console.log("Intent classifier error:", err.message);
-    return { intent: "general", query: message };
-  }
-}
-
 /* ================= Resolve WhatsApp ID ================= */
 
 async function resolveId(msg) {
@@ -179,15 +162,10 @@ async function resolveId(msg) {
 
 /* ================= Process Message (shared by all platforms) ================= */
 
+import { runAgent } from "./tools/agent.js";
+
 async function processMessage(text, resolvedUserId) {
-  const { intent, query } = await classifyIntent(text);
-
-  if (intent === "search") {
-    const results = await webSearch(query || text);
-    return await askLLM(`Summarize these search results in 3 lines:\n${results}`, null);
-  }
-
-  return await askLLM(text, resolvedUserId);
+  return await runAgent(text, resolvedUserId);
 }
 
 /* ================= WhatsApp Message Handler ================= */
@@ -237,34 +215,48 @@ waClient.on("message_create", async msg => {
     return;
   }
 
-  const { intent } = await classifyIntent(cleanMessage);
-
-  if (intent === "reminder") {
-    try {
-      const parsedRaw = await extractReminderDetails(cleanMessage);
-      if (!parsedRaw) { await msg.reply("Jarvis: I couldn't understand the reminder."); return; }
-
-      let cleanRaw = parsedRaw.trim();
-      if (!cleanRaw.endsWith("}")) cleanRaw += "}";
-      const jsonMatch = cleanRaw.match(/\{[^{}]*\}/);
-      if (!jsonMatch) { await msg.reply("Jarvis: Reminder format error."); return; }
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (!parsed.task || !parsed.datetime) { await msg.reply("Jarvis: Reminder details incomplete."); return; }
-
-      const reminderTime = new Date(parsed.datetime);
-      if (isNaN(reminderTime.getTime())) { await msg.reply("Jarvis: Invalid time format."); return; }
-      if (reminderTime <= new Date()) { await msg.reply("Jarvis: That time has already passed."); return; }
-
-      addReminder(resolvedUserId, parsed.task, reminderTime);
-      await msg.reply(`Jarvis: Reminder set for "${parsed.task}" at ${reminderTime.toLocaleString()}`);
-
-    } catch (err) {
-      console.log("Reminder parsing error:", err);
-      await msg.reply("Jarvis: I couldn't process that reminder.");
+  if (/remind me/i.test(cleanMessage)) {
+  try {
+    const parsedRaw = await extractReminderDetails(cleanMessage);
+    if (!parsedRaw) {
+      await msg.reply("Jarvis: I couldn't understand the reminder.");
+      return;
     }
-    return;
+
+    let cleanRaw = parsedRaw.trim();
+    if (!cleanRaw.endsWith("}")) cleanRaw += "}";
+    const jsonMatch = cleanRaw.match(/\{[^{}]*\}/);
+    if (!jsonMatch) {
+      await msg.reply("Jarvis: Reminder format error.");
+      return;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed.task || !parsed.datetime) {
+      await msg.reply("Jarvis: Reminder details incomplete.");
+      return;
+    }
+
+    const reminderTime = new Date(parsed.datetime);
+    if (isNaN(reminderTime.getTime())) {
+      await msg.reply("Jarvis: Invalid time format.");
+      return;
+    }
+
+    if (reminderTime <= new Date()) {
+      await msg.reply("Jarvis: That time has already passed.");
+      return;
+    }
+
+    addReminder(resolvedUserId, parsed.task, reminderTime);
+    await msg.reply(`Jarvis: Reminder set for "${parsed.task}" at ${reminderTime.toLocaleString()}`);
+
+  } catch (err) {
+    console.log("Reminder parsing error:", err);
+    await msg.reply("Jarvis: I couldn't process that reminder.");
   }
+  return;
+}
 
   const reply = await processMessage(cleanMessage, resolvedUserId);
   await msg.reply("Jarvis: " + reply);
@@ -403,3 +395,5 @@ wssDesktop.on("connection", (ws) => {
 });
 
 httpServer.listen(5001, () => console.log("Desktop voice server on 5001"));
+
+export { askLLM, askLLMRaw };
